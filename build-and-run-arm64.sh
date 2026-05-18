@@ -126,7 +126,7 @@ Examples:
   Build kkFileView from git:
     ./build-and-run-arm64.sh \
       --source-type git \
-      --repo https://gitee.com/kekingcn/file-online-preview.git \
+      --repo https://github.com/kekingcn/file-online-preview.git \
       --ref v5.0.0 \
       --build-cmd "mvn -pl server -am -DskipTests clean package" \
       --artifact-path "server/target/kkFileView-*.tar.gz" \
