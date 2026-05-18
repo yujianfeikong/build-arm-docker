@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODE="${MODE:-local-x86}"
+MODE="${MODE:-local-arm}"
 ACTION="${ACTION:-build}"
 ENV_FILE="${ENV_FILE:-}"
-BUILDER_FORCE_RECREATE="${BUILDER_FORCE_RECREATE:-0}"
 PLATFORM="${PLATFORM:-linux/arm64}"
 IMAGE_NAME="${IMAGE_NAME:-custom-arm64:local}"
 IMAGE_TAR_PATH="${IMAGE_TAR_PATH:-}"
+IMAGE_TAR_GZIP="${IMAGE_TAR_GZIP:-auto}"
 CONTAINER_NAME="${CONTAINER_NAME:-custom-arm64}"
 DOCKERFILE="${DOCKERFILE:-Dockerfile.arm64}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,9 +26,10 @@ BUILD_CMD="${BUILD_CMD:-true}"
 
 ARTIFACT_PATH="${ARTIFACT_PATH:-}"
 ARTIFACT_MODE="${ARTIFACT_MODE:-dir}"
-RUNTIME_IMAGE="${RUNTIME_IMAGE:-eclipse-temurin:21-jre-jammy}"
+RUNTIME_IMAGE="${RUNTIME_IMAGE:-eclipse-temurin:21-jre}"
 RUNTIME_APT_PACKAGES="${RUNTIME_APT_PACKAGES:-ca-certificates curl}"
 RUNTIME_SETUP_CMD="${RUNTIME_SETUP_CMD:-:}"
+RUNTIME_CLEAN_PATHS="${RUNTIME_CLEAN_PATHS:-/usr/share/doc /usr/share/doc-base /usr/share/man /var/cache/apt/archives}"
 APP_DEST="${APP_DEST:-/opt/app}"
 EXPOSE_PORTS="${EXPOSE_PORTS:-8012}"
 START_COMMAND="${START_COMMAND:-}"
@@ -36,19 +37,11 @@ CONTAINER_PORT="${CONTAINER_PORT:-8012}"
 HOST_PORT="${HOST_PORT:-8012}"
 RUN_ENV_VARS="${RUN_ENV_VARS:-}"
 
-BUILDER_NAME="${BUILDER_NAME:-multiarch-generic}"
-DEFAULT_INSTALL_BINFMT=1
-if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "${RUNNER_ARCH:-}" = "ARM64" ]; then
-  DEFAULT_INSTALL_BINFMT=0
-fi
-INSTALL_BINFMT="${INSTALL_BINFMT:-$DEFAULT_INSTALL_BINFMT}"
-LOCAL_OUTPUT="${LOCAL_OUTPUT:---load}"
 DEFAULT_LOCAL_PROGRESS=auto
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
   DEFAULT_LOCAL_PROGRESS=plain
 fi
 LOCAL_PROGRESS="${LOCAL_PROGRESS:-$DEFAULT_LOCAL_PROGRESS}"
-EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS:-}"
 
 REMOTE_HOST="${REMOTE_HOST:-}"
 REMOTE_PORT="${REMOTE_PORT:-22}"
@@ -70,7 +63,7 @@ Core idea:
   2. a git repository
 
 Modes:
-  --mode local-x86      Build ARM64 image on local x86 with docker buildx.
+  --mode local-arm      Build ARM64 image on a native ARM64 Docker host.
   --mode remote-arm     Sync build context to remote ARM host and build there natively.
 
 Actions:
@@ -103,24 +96,21 @@ Runtime options:
   --runtime-image IMAGE
   --runtime-apt-packages "pkg1 pkg2"
   --runtime-setup-cmd CMD
+  --runtime-clean-paths "PATH1 PATH2"
   --start-command CMD
   --expose-ports PORTS
 
 Run/test helper options:
   --image NAME
   --image-tar PATH
+  --image-tar-gzip auto|0|1
   --container-name NAME
   --host-port PORT
   --container-port PORT
   --run-env-vars "KEY1=V1,KEY2=V2"
 
-Local x86 options:
-  --builder NAME
-  --local-output VALUE
-  --extra-build-args "ARGS"
-  --skip-binfmt
+Local ARM options:
   --progress VALUE
-  --force-recreate-builder  Recreate buildx builder before build.
 
 Remote ARM options:
   --remote-host HOST
@@ -143,7 +133,9 @@ Examples:
       --build-cmd "mvn -pl server -am -DskipTests clean package" \
       --artifact-path "server/target/kkFileView-*.tar.gz" \
       --artifact-mode archive \
-      --runtime-apt-packages "libreoffice libreoffice-java-common fonts-noto-cjk fontconfig locales tzdata ca-certificates curl procps" \
+      --runtime-image eclipse-temurin:21-jre \
+      --runtime-apt-packages "ca-certificates fontconfig libreoffice-writer libreoffice-calc libreoffice-impress libreoffice-draw libreoffice-java-common fonts-wqy-zenhei" \
+      --runtime-setup-cmd "rm -rf /usr/lib/libreoffice/share/gallery /usr/lib/libreoffice/share/template /var/tmp/* /tmp/*" \
       --app-dest /opt/kkFileView \
       --start-command "java -Dfile.encoding=UTF-8 -Dspring.config.location=/opt/kkFileView/config/application.properties -jar \$(find /opt/kkFileView/bin -maxdepth 1 -type f -name 'kkFileView-*.jar' | head -n 1)" \
       --image kkfileview-arm64:v5.0.0
@@ -201,10 +193,34 @@ cleanup_workdir() {
 export_image_tar() {
   [ -n "$IMAGE_TAR_PATH" ] || return 0
   require_cmd docker
+  local gzip_output=0
+  local tmp_tar_path="$IMAGE_TAR_PATH"
+
+  case "$IMAGE_TAR_GZIP" in
+    1|true|yes) gzip_output=1 ;;
+    0|false|no) gzip_output=0 ;;
+    auto)
+      case "$IMAGE_TAR_PATH" in
+        *.gz) gzip_output=1 ;;
+      esac
+      ;;
+    *)
+      die "unsupported IMAGE_TAR_GZIP value: $IMAGE_TAR_GZIP"
+      ;;
+  esac
+
+  if [ "$gzip_output" = "1" ]; then
+    require_cmd gzip
+    tmp_tar_path="${IMAGE_TAR_PATH%.gz}"
+  fi
+
   mkdir -p "$(dirname "$IMAGE_TAR_PATH")"
   docker image inspect "$IMAGE_NAME" >/dev/null 2>&1 || die "image not found locally for export: $IMAGE_NAME. Use --local-output --load when exporting tar."
   log "exporting docker image tar to $IMAGE_TAR_PATH"
-  docker save --output "$IMAGE_TAR_PATH" "$IMAGE_NAME"
+  docker save --output "$tmp_tar_path" "$IMAGE_NAME"
+  if [ "$gzip_output" = "1" ]; then
+    gzip -f "$tmp_tar_path"
+  fi
 }
 
 prepare_context() {
@@ -264,6 +280,7 @@ parse_args() {
       --action) ACTION="$2"; shift 2 ;;
       --image) IMAGE_NAME="$2"; REMOTE_IMAGE_NAME="$2"; shift 2 ;;
       --image-tar) IMAGE_TAR_PATH="$2"; shift 2 ;;
+      --image-tar-gzip) IMAGE_TAR_GZIP="$2"; shift 2 ;;
       --container-name) CONTAINER_NAME="$2"; shift 2 ;;
       --source-type) SOURCE_TYPE="$2"; shift 2 ;;
       --repo) GIT_REPO="$2"; shift 2 ;;
@@ -279,6 +296,7 @@ parse_args() {
       --runtime-image) RUNTIME_IMAGE="$2"; shift 2 ;;
       --runtime-apt-packages) RUNTIME_APT_PACKAGES="$2"; shift 2 ;;
       --runtime-setup-cmd) RUNTIME_SETUP_CMD="$2"; shift 2 ;;
+      --runtime-clean-paths) RUNTIME_CLEAN_PATHS="$2"; shift 2 ;;
       --app-dest) APP_DEST="$2"; shift 2 ;;
       --start-command) START_COMMAND="$2"; shift 2 ;;
       --expose-ports) EXPOSE_PORTS="$2"; shift 2 ;;
@@ -287,11 +305,6 @@ parse_args() {
       --run-env-vars) RUN_ENV_VARS="$2"; shift 2 ;;
       --dockerfile) DOCKERFILE="$2"; shift 2 ;;
       --platform) PLATFORM="$2"; shift 2 ;;
-      --builder) BUILDER_NAME="$2"; shift 2 ;;
-      --local-output) LOCAL_OUTPUT="$2"; shift 2 ;;
-      --extra-build-args) EXTRA_BUILD_ARGS="$2"; shift 2 ;;
-      --skip-binfmt) INSTALL_BINFMT=0; shift 1 ;;
-      --force-recreate-builder) BUILDER_FORCE_RECREATE=1; shift 1 ;;
       --progress) LOCAL_PROGRESS="$2"; REMOTE_PROGRESS="$2"; shift 2 ;;
       --remote-host) REMOTE_HOST="$2"; shift 2 ;;
       --remote-user) REMOTE_USER="$2"; shift 2 ;;
@@ -308,7 +321,7 @@ parse_args() {
 
 validate_args() {
   case "$MODE" in
-    local-x86|remote-arm) ;;
+    local-arm|remote-arm) ;;
     *) die "unsupported mode: $MODE" ;;
   esac
 
@@ -341,36 +354,16 @@ validate_args() {
   fi
 }
 
-ensure_local_builder() {
+ensure_local_arm_host() {
   require_cmd docker
-  docker buildx version >/dev/null 2>&1 || die "docker buildx is required"
-
-  if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "${RUNNER_ARCH:-}" = "ARM64" ] && [ "$BUILDER_FORCE_RECREATE" != "1" ]; then
-    if docker buildx inspect >/dev/null 2>&1; then
-      log "using existing buildx builder from GitHub Actions ARM runner"
-      docker buildx inspect --bootstrap >/dev/null
-      return 0
-    fi
-  fi
-
-  if [ "$BUILDER_FORCE_RECREATE" = "1" ] && docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
-    log "recreating buildx builder: $BUILDER_NAME"
-    docker buildx rm "$BUILDER_NAME" >/dev/null
-  fi
-
-  if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
-    log "creating buildx builder: $BUILDER_NAME"
-    docker buildx create --name "$BUILDER_NAME" --use >/dev/null
-  else
-    docker buildx use "$BUILDER_NAME" >/dev/null
-  fi
-
-  if [ "$INSTALL_BINFMT" = "1" ]; then
-    log "installing binfmt for cross-arch emulation"
-    docker run --privileged --rm tonistiigi/binfmt --install all >/dev/null
-  fi
-
-  docker buildx inspect --bootstrap >/dev/null
+  local host_arch
+  host_arch="$(docker version --format '{{.Server.Arch}}' 2>/dev/null || true)"
+  case "$host_arch" in
+    arm64|aarch64) ;;
+    *)
+      die "native ARM64 build requires an ARM64 Docker host, got: ${host_arch:-unknown}"
+      ;;
+  esac
 }
 
 build_args_common() {
@@ -388,41 +381,36 @@ build_args_common() {
     --build-arg "ARTIFACT_MODE=${ARTIFACT_MODE}"
     --build-arg "RUNTIME_APT_PACKAGES=${RUNTIME_APT_PACKAGES}"
     --build-arg "RUNTIME_SETUP_CMD=${RUNTIME_SETUP_CMD}"
+    --build-arg "RUNTIME_CLEAN_PATHS=${RUNTIME_CLEAN_PATHS}"
     --build-arg "APP_DEST=${APP_DEST}"
     --build-arg "EXPOSE_PORTS=${EXPOSE_PORTS}"
     --build-arg "DEFAULT_START_COMMAND=${START_COMMAND}"
   )
 }
 
-build_local_x86() {
+build_local_arm() {
   prepare_context
-  ensure_local_builder
+  ensure_local_arm_host
 
-  log "building ARM64 image on local x86 host"
+  log "building ARM64 image on native ARM64 Docker host"
   log "image=${IMAGE_NAME} source_type=${SOURCE_TYPE}"
 
   local -a BUILD_ARGS
-  local -a EXTRA_ARGS=()
   build_args_common
-  if [ -n "$EXTRA_BUILD_ARGS" ]; then
-    read -r -a EXTRA_ARGS <<< "$EXTRA_BUILD_ARGS"
-  fi
 
-  docker buildx build \
-    --platform "$PLATFORM" \
+  docker build \
+    --platform="$PLATFORM" \
     --progress "$LOCAL_PROGRESS" \
     -f "$WORK_DIR/$DOCKERFILE" \
     -t "$IMAGE_NAME" \
-    "$LOCAL_OUTPUT" \
     "${BUILD_ARGS[@]}" \
-    "${EXTRA_ARGS[@]}" \
     "$WORK_DIR"
 
   export_image_tar
 
   cat <<EOF
 
-Build finished for local-x86 mode.
+Build finished for local-arm mode.
 Source type: ${SOURCE_TYPE}
 Image: ${IMAGE_NAME}
 Image tar: ${IMAGE_TAR_PATH:-<not exported>}
@@ -508,7 +496,7 @@ main() {
       ;;
     build)
       case "$MODE" in
-        local-x86) build_local_x86 ;;
+        local-arm) build_local_arm ;;
         remote-arm) build_remote_arm ;;
       esac
       ;;

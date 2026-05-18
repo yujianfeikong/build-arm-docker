@@ -19,10 +19,9 @@ This repository provides the following components:
 The workflow is designed around GitHub-hosted ARM64 runners and follows this sequence:
 
 1. Check out the repository.
-2. Prepare Docker Buildx.
-3. Execute [build-and-run-arm64.sh](/Users/bo/Documents/build-arm-docker/build-and-run-arm64.sh) with [examples/kkfileview-5.0.0.env](/Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env).
-4. Export the built image to `kkfileview-arm64-v5.0.0.tar`.
-5. Upload the tarball as a GitHub Actions artifact.
+2. Execute [build-and-run-arm64.sh](/Users/bo/Documents/build-arm-docker/build-and-run-arm64.sh) with [examples/kkfileview-5.0.0.env](/Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env).
+3. Build the image natively on the ARM64 runner and export it to `kkfileview-arm64-v5.0.0.tar.gz`.
+4. Upload the tarball as a GitHub Actions artifact.
 
 The reference workflow artifact name is `kkfileview-arm64-v5.0.0-image-tar`.
 
@@ -40,12 +39,12 @@ After the workflow completes:
 1. Open the corresponding workflow run.
 2. Locate the `Artifacts` section at the bottom of the page.
 3. Download `kkfileview-arm64-v5.0.0-image-tar`.
-4. Extract the archive to obtain `kkfileview-arm64-v5.0.0.tar`.
+4. Extract the archive to obtain `kkfileview-arm64-v5.0.0.tar.gz`.
 
 Load the image on an ARM64 Docker host:
 
 ```bash
-docker load -i kkfileview-arm64-v5.0.0.tar
+gzip -dc kkfileview-arm64-v5.0.0.tar.gz | docker load
 ```
 
 Start the container:
@@ -63,13 +62,17 @@ docker run -d \
 
 The example configuration file [examples/kkfileview-5.0.0.env](/Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env) defines the upstream source, build command, runtime packages, startup command, image name, and exported ports.
 
+The reference `kkFileView` config is tuned for a smaller runtime image:
+
+- use `eclipse-temurin:21-jre` instead of the heavier `jammy`-pinned runtime base
+- install only the LibreOffice components needed for common document conversions
+- use `fonts-wqy-zenhei` as a lighter Chinese font fallback
+- remove LibreOffice gallery/template assets and package docs after install
+
 The workflow currently sets the following GitHub Actions specific parameters:
 
-- `IMAGE_TAR_PATH`: export location for `docker save`
-- `INSTALL_BINFMT=0`: skips unnecessary `binfmt` installation on ARM64 runners
-- `LOCAL_OUTPUT=--load`: loads the image into the runner's local Docker daemon before export
+- `IMAGE_TAR_PATH`: export location for `docker save`, with optional gzip compression when the path ends in `.gz`
 - `LOCAL_PROGRESS=plain`: provides stable workflow logs
-- `EXTRA_BUILD_ARGS=--cache-from=type=gha --cache-to=type=gha,mode=max`: enables BuildKit cache reuse across workflow runs
 
 ## Implementation Notes
 
@@ -77,10 +80,8 @@ This repository currently retains a general-purpose build script, but the docume
 
 The workflow has been optimized for the current execution model:
 
-- reuse the Buildx environment prepared by `docker/setup-buildx-action`
-- avoid redundant `binfmt` initialization on ARM64 runners
+- build directly on a native ARM64 Docker host
 - export a downloadable image tarball as the canonical build output
-- use GitHub Actions cache-backed BuildKit layers to reduce repeat build time
 
 ## Requirements
 
