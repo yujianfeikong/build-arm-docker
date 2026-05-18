@@ -1,0 +1,5 @@
+.build-work/
+.env.local
+.env.*.local
+*.log
+build.log

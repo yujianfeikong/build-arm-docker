@@ -1,0 +1,93 @@
+# syntax=docker/dockerfile:1.7
+
+ARG BUILDER_IMAGE=maven:3.9.9-eclipse-temurin-21
+ARG RUNTIME_IMAGE=eclipse-temurin:21-jre-jammy
+
+FROM --platform=$BUILDPLATFORM ${BUILDER_IMAGE} AS builder
+
+ARG SOURCE_TYPE=git
+ARG GIT_REPO=
+ARG GIT_REF=main
+ARG SOURCE_SUBDIR=.
+ARG BUILDER_APT_PACKAGES=git ca-certificates
+ARG BUILDER_SETUP_CMD=:
+ARG BUILD_CMD=true
+ARG ARTIFACT_PATH=
+ARG ARTIFACT_MODE=dir
+
+WORKDIR /workspace
+
+RUN if [ -n "${BUILDER_APT_PACKAGES}" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends ${BUILDER_APT_PACKAGES} && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+RUN sh -lc "${BUILDER_SETUP_CMD}"
+
+COPY local-source /context/local-source
+
+RUN if [ "${SOURCE_TYPE}" = "git" ]; then \
+      git clone --depth 1 --branch "${GIT_REF}" "${GIT_REPO}" /workspace/src; \
+    elif [ "${SOURCE_TYPE}" = "local" ]; then \
+      mkdir -p /workspace/src && cp -a /context/local-source/. /workspace/src/; \
+    else \
+      echo "unsupported SOURCE_TYPE=${SOURCE_TYPE}" >&2; \
+      exit 1; \
+    fi
+
+WORKDIR /workspace/src
+
+RUN sh -lc "cd '${SOURCE_SUBDIR}' && ${BUILD_CMD}"
+
+RUN mkdir -p /out && \
+    sh -lc "cd /workspace/src && \
+      if [ -z '${ARTIFACT_PATH}' ]; then \
+        cp -a '${SOURCE_SUBDIR}'/. /out/app/; \
+      elif [ '${ARTIFACT_MODE}' = 'archive' ]; then \
+        mkdir -p /out/archive && cp ${ARTIFACT_PATH} /out/archive/artifact.tar.gz; \
+      elif [ '${ARTIFACT_MODE}' = 'file' ]; then \
+        mkdir -p /out/file && cp ${ARTIFACT_PATH} /out/file/; \
+      elif [ '${ARTIFACT_MODE}' = 'dir' ]; then \
+        mkdir -p /out/app && cp -a ${ARTIFACT_PATH}/. /out/app/; \
+      else \
+        echo 'unsupported ARTIFACT_MODE=${ARTIFACT_MODE}' >&2; \
+        exit 1; \
+      fi"
+
+FROM --platform=$TARGETPLATFORM ${RUNTIME_IMAGE}
+
+ARG RUNTIME_APT_PACKAGES=ca-certificates curl
+ARG RUNTIME_SETUP_CMD=:
+ARG APP_DEST=/opt/app
+ARG ARTIFACT_MODE=dir
+ARG EXPOSE_PORTS=8012
+ARG DEFAULT_START_COMMAND=
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=Asia/Shanghai \
+    APP_DEST=${APP_DEST} \
+    START_COMMAND=${DEFAULT_START_COMMAND}
+
+WORKDIR /opt
+
+COPY --from=builder /out /tmp/build-output
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+RUN if [ -n "${RUNTIME_APT_PACKAGES}" ]; then \
+      apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${RUNTIME_APT_PACKAGES} && rm -rf /var/lib/apt/lists/*; \
+    fi && \
+    mkdir -p "${APP_DEST}" && \
+    if [ "${ARTIFACT_MODE}" = "archive" ]; then \
+      tar -xzf /tmp/build-output/archive/artifact.tar.gz -C "${APP_DEST}" --strip-components=1; \
+    elif [ "${ARTIFACT_MODE}" = "file" ]; then \
+      cp -a /tmp/build-output/file/. "${APP_DEST}/"; \
+    else \
+      cp -a /tmp/build-output/app/. "${APP_DEST}/"; \
+    fi && \
+    rm -rf /tmp/build-output && \
+    sh -lc "${RUNTIME_SETUP_CMD}" && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh
+
+EXPOSE ${EXPOSE_PORTS}
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
