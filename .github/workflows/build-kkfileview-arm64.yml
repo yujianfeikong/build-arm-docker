@@ -11,12 +11,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          install: true
 
-      - name: Build kkFileView 5.0.0 ARM64 image
+      - name: Build kkFileView 5.0.0 ARM64 image tar
+        env:
+          IMAGE_TAR_PATH: ${{ runner.temp }}/kkfileview-arm64-v5.0.0.tar
+          INSTALL_BINFMT: "0"
+          LOCAL_OUTPUT: --load
+          LOCAL_PROGRESS: plain
+          EXTRA_BUILD_ARGS: --cache-from=type=gha --cache-to=type=gha,mode=max
         run: |
           chmod +x ./build-and-run-arm64.sh
           ./build-and-run-arm64.sh \
             --env-file examples/kkfileview-5.0.0.env
+
+      - name: Upload image tar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kkfileview-arm64-v5.0.0-image-tar
+          path: ${{ runner.temp }}/kkfileview-arm64-v5.0.0.tar
+          if-no-files-found: error
+          retention-days: 7

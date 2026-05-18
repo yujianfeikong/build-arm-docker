@@ -7,6 +7,7 @@ ENV_FILE="${ENV_FILE:-}"
 BUILDER_FORCE_RECREATE="${BUILDER_FORCE_RECREATE:-0}"
 PLATFORM="${PLATFORM:-linux/arm64}"
 IMAGE_NAME="${IMAGE_NAME:-custom-arm64:local}"
+IMAGE_TAR_PATH="${IMAGE_TAR_PATH:-}"
 CONTAINER_NAME="${CONTAINER_NAME:-custom-arm64}"
 DOCKERFILE="${DOCKERFILE:-Dockerfile.arm64}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,9 +37,18 @@ HOST_PORT="${HOST_PORT:-8012}"
 RUN_ENV_VARS="${RUN_ENV_VARS:-}"
 
 BUILDER_NAME="${BUILDER_NAME:-multiarch-generic}"
-INSTALL_BINFMT="${INSTALL_BINFMT:-1}"
+DEFAULT_INSTALL_BINFMT=1
+if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "${RUNNER_ARCH:-}" = "ARM64" ]; then
+  DEFAULT_INSTALL_BINFMT=0
+fi
+INSTALL_BINFMT="${INSTALL_BINFMT:-$DEFAULT_INSTALL_BINFMT}"
 LOCAL_OUTPUT="${LOCAL_OUTPUT:---load}"
-LOCAL_PROGRESS="${LOCAL_PROGRESS:-auto}"
+DEFAULT_LOCAL_PROGRESS=auto
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  DEFAULT_LOCAL_PROGRESS=plain
+fi
+LOCAL_PROGRESS="${LOCAL_PROGRESS:-$DEFAULT_LOCAL_PROGRESS}"
+EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS:-}"
 
 REMOTE_HOST="${REMOTE_HOST:-}"
 REMOTE_PORT="${REMOTE_PORT:-22}"
@@ -98,6 +108,7 @@ Runtime options:
 
 Run/test helper options:
   --image NAME
+  --image-tar PATH
   --container-name NAME
   --host-port PORT
   --container-port PORT
@@ -106,6 +117,7 @@ Run/test helper options:
 Local x86 options:
   --builder NAME
   --local-output VALUE
+  --extra-build-args "ARGS"
   --skip-binfmt
   --progress VALUE
   --force-recreate-builder  Recreate buildx builder before build.
@@ -186,6 +198,15 @@ cleanup_workdir() {
   rm -rf "$WORK_DIR"
 }
 
+export_image_tar() {
+  [ -n "$IMAGE_TAR_PATH" ] || return 0
+  require_cmd docker
+  mkdir -p "$(dirname "$IMAGE_TAR_PATH")"
+  docker image inspect "$IMAGE_NAME" >/dev/null 2>&1 || die "image not found locally for export: $IMAGE_NAME. Use --local-output --load when exporting tar."
+  log "exporting docker image tar to $IMAGE_TAR_PATH"
+  docker save --output "$IMAGE_TAR_PATH" "$IMAGE_NAME"
+}
+
 prepare_context() {
   cleanup_workdir
   mkdir -p "$WORK_DIR/local-source"
@@ -242,6 +263,7 @@ parse_args() {
       --mode) MODE="$2"; shift 2 ;;
       --action) ACTION="$2"; shift 2 ;;
       --image) IMAGE_NAME="$2"; REMOTE_IMAGE_NAME="$2"; shift 2 ;;
+      --image-tar) IMAGE_TAR_PATH="$2"; shift 2 ;;
       --container-name) CONTAINER_NAME="$2"; shift 2 ;;
       --source-type) SOURCE_TYPE="$2"; shift 2 ;;
       --repo) GIT_REPO="$2"; shift 2 ;;
@@ -267,6 +289,7 @@ parse_args() {
       --platform) PLATFORM="$2"; shift 2 ;;
       --builder) BUILDER_NAME="$2"; shift 2 ;;
       --local-output) LOCAL_OUTPUT="$2"; shift 2 ;;
+      --extra-build-args) EXTRA_BUILD_ARGS="$2"; shift 2 ;;
       --skip-binfmt) INSTALL_BINFMT=0; shift 1 ;;
       --force-recreate-builder) BUILDER_FORCE_RECREATE=1; shift 1 ;;
       --progress) LOCAL_PROGRESS="$2"; REMOTE_PROGRESS="$2"; shift 2 ;;
@@ -322,6 +345,14 @@ ensure_local_builder() {
   require_cmd docker
   docker buildx version >/dev/null 2>&1 || die "docker buildx is required"
 
+  if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "${RUNNER_ARCH:-}" = "ARM64" ] && [ "$BUILDER_FORCE_RECREATE" != "1" ]; then
+    if docker buildx inspect >/dev/null 2>&1; then
+      log "using existing buildx builder from GitHub Actions ARM runner"
+      docker buildx inspect --bootstrap >/dev/null
+      return 0
+    fi
+  fi
+
   if [ "$BUILDER_FORCE_RECREATE" = "1" ] && docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
     log "recreating buildx builder: $BUILDER_NAME"
     docker buildx rm "$BUILDER_NAME" >/dev/null
@@ -371,7 +402,11 @@ build_local_x86() {
   log "image=${IMAGE_NAME} source_type=${SOURCE_TYPE}"
 
   local -a BUILD_ARGS
+  local -a EXTRA_ARGS=()
   build_args_common
+  if [ -n "$EXTRA_BUILD_ARGS" ]; then
+    read -r -a EXTRA_ARGS <<< "$EXTRA_BUILD_ARGS"
+  fi
 
   docker buildx build \
     --platform "$PLATFORM" \
@@ -380,13 +415,17 @@ build_local_x86() {
     -t "$IMAGE_NAME" \
     "$LOCAL_OUTPUT" \
     "${BUILD_ARGS[@]}" \
+    "${EXTRA_ARGS[@]}" \
     "$WORK_DIR"
+
+  export_image_tar
 
   cat <<EOF
 
 Build finished for local-x86 mode.
 Source type: ${SOURCE_TYPE}
 Image: ${IMAGE_NAME}
+Image tar: ${IMAGE_TAR_PATH:-<not exported>}
 EOF
   print_manual_test
 }

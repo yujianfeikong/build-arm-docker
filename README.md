@@ -1,199 +1,95 @@
 # ARM64 Image Builder
 
-通用 ARM64 Docker 镜像构建脚本。目标是让你只通过“源码来源 + 构建命令 + 运行时依赖 + 启动命令”四类信息，就能在 x86 或远程 ARM 机器上一键产出 `linux/arm64` 镜像。
+`ARM64 Image Builder` is a GitHub Actions based build template for producing downloadable `linux/arm64` Docker images from source projects that require custom build steps and runtime dependencies.
 
-适用场景：
+The current repository is maintained for GitHub Actions execution only. The primary example builds `kkFileView 5.0.0` on an ARM64 runner, exports the resulting image as a `.tar` archive, and publishes it as a workflow artifact.
 
-- 从 Git 仓库构建 ARM64 镜像
-- 从本地目录构建 ARM64 镜像
-- 需要自定义 builder/runtime 基础镜像
-- 需要安装特定构建依赖或运行时依赖
-- 需要在本地 x86 交叉构建，或在远程 ARM 原生构建
+## Overview
 
-## 文件说明
+This repository provides the following components:
 
-- [build-and-run-arm64.sh](/Users/bo/Documents/build-arm-docker/build-and-run-arm64.sh)：主脚本
-- [Dockerfile.arm64](/Users/bo/Documents/build-arm-docker/Dockerfile.arm64)：通用多阶段 Dockerfile 模板
-- [docker-entrypoint.sh](/Users/bo/Documents/build-arm-docker/docker-entrypoint.sh)：通用容器入口
-- [`.env.example`](/Users/bo/Documents/build-arm-docker/.env.example)：通用配置模板
-- [examples/kkfileview-5.0.0.env](/Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env)：`kkFileView 5.0.0` 完整示例
-- [docs/phase-01-arm64-build.md](/Users/bo/Documents/build-arm-docker/docs/phase-01-arm64-build.md)：阶段记录
+- [build-and-run-arm64.sh](/Users/bo/Documents/build-arm-docker/build-and-run-arm64.sh): build entry script invoked by GitHub Actions
+- [Dockerfile.arm64](/Users/bo/Documents/build-arm-docker/Dockerfile.arm64): multi-stage ARM64 image template
+- [docker-entrypoint.sh](/Users/bo/Documents/build-arm-docker/docker-entrypoint.sh): container entrypoint
+- [examples/kkfileview-5.0.0.env](/Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env): reference configuration for `kkFileView 5.0.0`
+- [.github/workflows/build-kkfileview-arm64.yml](/Users/bo/Documents/build-arm-docker/.github/workflows/build-kkfileview-arm64.yml): workflow definition
 
-## 快速开始
+## Workflow
 
-先给脚本执行权限：
+The workflow is designed around GitHub-hosted ARM64 runners and follows this sequence:
 
-```bash
-chmod +x /Users/bo/Documents/build-arm-docker/build-and-run-arm64.sh
-```
+1. Check out the repository.
+2. Prepare Docker Buildx.
+3. Execute [build-and-run-arm64.sh](/Users/bo/Documents/build-arm-docker/build-and-run-arm64.sh) with [examples/kkfileview-5.0.0.env](/Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env).
+4. Export the built image to `kkfileview-arm64-v5.0.0.tar`.
+5. Upload the tarball as a GitHub Actions artifact.
 
-查看帮助：
+The reference workflow artifact name is `kkfileview-arm64-v5.0.0-image-tar`.
 
-```bash
-cd /Users/bo/Documents/build-arm-docker
-./build-and-run-arm64.sh --help
-```
+## Usage
 
-## 推荐用法
+Trigger the workflow from the GitHub Actions page:
 
-### 1. 用配置文件驱动
+1. Open the repository in GitHub.
+2. Navigate to `Actions`.
+3. Select `build-kkfileview-arm64`.
+4. Run the workflow manually.
 
-最推荐。先复制模板，再修改变量：
+After the workflow completes:
 
-```bash
-cp /Users/bo/Documents/build-arm-docker/.env.example /Users/bo/Documents/build-arm-docker/.env.local
-./build-and-run-arm64.sh --env-file /Users/bo/Documents/build-arm-docker/.env.local
-```
+1. Open the corresponding workflow run.
+2. Locate the `Artifacts` section at the bottom of the page.
+3. Download `kkfileview-arm64-v5.0.0-image-tar`.
+4. Extract the archive to obtain `kkfileview-arm64-v5.0.0.tar`.
 
-如果改过代理配置，或者之前 builder 创建失败，建议强制重建 builder：
+Load the image on an ARM64 Docker host:
 
 ```bash
-./build-and-run-arm64.sh \
-  --env-file /Users/bo/Documents/build-arm-docker/.env.local \
-  --force-recreate-builder
+docker load -i kkfileview-arm64-v5.0.0.tar
 ```
 
-### 2. 在 GitHub Actions 里执行
-
-最适合当前仓库的使用方式，是直接在 GitHub Actions ARM runner 上调用脚本。
-
-示例 workflow：
-
-- [.github/workflows/build-kkfileview-arm64.yml](/Users/bo/Documents/build-arm-docker/.github/workflows/build-kkfileview-arm64.yml)
-
-### 3. 从 Git 仓库构建
-
-```bash
-./build-and-run-arm64.sh \
-  --source-type git \
-  --repo https://github.com/example/project.git \
-  --ref main \
-  --build-cmd "mvn -DskipTests package" \
-  --artifact-path "target/app.tar.gz" \
-  --artifact-mode archive \
-  --runtime-apt-packages "ca-certificates curl" \
-  --app-dest /opt/app \
-  --start-command "java -jar /opt/app/app.jar" \
-  --image example-arm64:latest
-```
-
-### 4. 从本地目录构建
-
-```bash
-./build-and-run-arm64.sh \
-  --source-type local \
-  --local-source-dir /path/to/project \
-  --builder-image node:20-bookworm \
-  --build-cmd "pnpm install && pnpm build" \
-  --artifact-path dist \
-  --artifact-mode dir \
-  --runtime-image nginx:alpine \
-  --runtime-apt-packages "" \
-  --start-command "nginx -g 'daemon off;'" \
-  --image demo-web-arm64:latest
-```
-
-### 5. 在远程 ARM 主机原生构建
-
-```bash
-./build-and-run-arm64.sh \
-  --mode remote-arm \
-  --remote-host 192.168.1.10 \
-  --remote-user ubuntu \
-  --source-type local \
-  --local-source-dir /path/to/project \
-  --build-cmd "go build -o app ./cmd/server" \
-  --artifact-path app \
-  --artifact-mode file \
-  --runtime-image ubuntu:22.04 \
-  --runtime-apt-packages "ca-certificates" \
-  --start-command "/opt/app/app" \
-  --image my-go-app-arm64:latest
-```
-
-## kkFileView 5.0.0 完整示例
-
-直接运行：
-
-```bash
-./build-and-run-arm64.sh --env-file /Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env
-```
-
-切到远程 ARM 原生构建：
-
-```bash
-./build-and-run-arm64.sh \
-  --env-file /Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env \
-  --mode remote-arm \
-  --remote-host 192.168.1.10 \
-  --remote-user ubuntu
-```
-
-只打印手动测试命令：
-
-```bash
-./build-and-run-arm64.sh \
-  --env-file /Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env \
-  --action print-test
-```
-
-## 核心参数
-
-源码来源：
-
-- `SOURCE_TYPE=git|local`
-- `GIT_REPO`
-- `GIT_REF`
-- `LOCAL_SOURCE_DIR`
-- `SOURCE_SUBDIR`
-
-构建阶段：
-
-- `BUILDER_IMAGE`
-- `BUILDER_APT_PACKAGES`
-- `BUILDER_SETUP_CMD`
-- `BUILD_CMD`
-
-产物与运行阶段：
-
-- `ARTIFACT_PATH`
-- `ARTIFACT_MODE=archive|dir|file`
-- `RUNTIME_IMAGE`
-- `RUNTIME_APT_PACKAGES`
-- `RUNTIME_SETUP_CMD`
-- `APP_DEST`
-- `START_COMMAND`
-
-执行方式：
-
-- `MODE=local-x86|remote-arm`
-- `ACTION=build|prepare|print-test`
-- `REMOTE_HOST`
-- `REMOTE_USER`
-- `REMOTE_WORKDIR`
-
-## 手动测试
-
-脚本默认不自动运行容器。构建完成后，可用：
-
-```bash
-./build-and-run-arm64.sh --env-file /Users/bo/Documents/build-arm-docker/.env.local --action print-test
-```
-
-或手动运行：
+Start the container:
 
 ```bash
 docker run -d \
-  --name custom-arm64 \
+  --name kkfileview-arm64 \
   --platform linux/arm64 \
   -p 8012:8012 \
-  custom-arm64:local
+  -e KK_TRUST_HOST='*' \
+  kkfileview-arm64:v5.0.0
 ```
 
-## 注意事项
+## Configuration
 
-- 本地 `x86 + QEMU` 构建安装大量 ARM64 系统包时，可能遇到兼容性问题。
-- 如果目标项目依赖 LibreOffice、图形库、编解码库等大体量系统包，优先建议 `remote-arm`。
-- `kkFileView 5.0.0` 按上游说明要求 `JDK 21+`。
-- `kkFileView 5.0.0` 在本地 x86 交叉构建时，安装 LibreOffice 依赖仍可能受 QEMU 稳定性影响。
-- 如果你使用 GitHub Actions ARM runner 构建，通常不需要额外处理代理问题。
+The example configuration file [examples/kkfileview-5.0.0.env](/Users/bo/Documents/build-arm-docker/examples/kkfileview-5.0.0.env) defines the upstream source, build command, runtime packages, startup command, image name, and exported ports.
+
+The workflow currently sets the following GitHub Actions specific parameters:
+
+- `IMAGE_TAR_PATH`: export location for `docker save`
+- `INSTALL_BINFMT=0`: skips unnecessary `binfmt` installation on ARM64 runners
+- `LOCAL_OUTPUT=--load`: loads the image into the runner's local Docker daemon before export
+- `LOCAL_PROGRESS=plain`: provides stable workflow logs
+- `EXTRA_BUILD_ARGS=--cache-from=type=gha --cache-to=type=gha,mode=max`: enables BuildKit cache reuse across workflow runs
+
+## Implementation Notes
+
+This repository currently retains a general-purpose build script, but the documented and supported operating mode is GitHub Actions only.
+
+The workflow has been optimized for the current execution model:
+
+- reuse the Buildx environment prepared by `docker/setup-buildx-action`
+- avoid redundant `binfmt` initialization on ARM64 runners
+- export a downloadable image tarball as the canonical build output
+- use GitHub Actions cache-backed BuildKit layers to reduce repeat build time
+
+## Requirements
+
+- GitHub Actions with access to ARM64 runners
+- Docker-compatible ARM64 host for loading and running the exported image
+- Sufficient disk space for build layers, runtime dependencies, and the exported image tarball
+
+## Notes
+
+- `kkFileView 5.0.0` requires `JDK 21+` according to the upstream project requirements.
+- The generated artifact is intended for manual download and `docker load`; the current workflow does not push images to a container registry.
+- If a registry-based distribution model is needed later, the workflow can be extended with an additional publish step without changing the build layout.

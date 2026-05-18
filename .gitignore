@@ -3,4 +3,3 @@
 .env.*.local
 *.log
 build.log
-docs/
