@@ -31,6 +31,7 @@ RUNTIME_APT_PACKAGES="${RUNTIME_APT_PACKAGES:-ca-certificates curl}"
 RUNTIME_SETUP_CMD="${RUNTIME_SETUP_CMD:-:}"
 RUNTIME_CLEAN_PATHS="${RUNTIME_CLEAN_PATHS:-/usr/share/doc /usr/share/doc-base /usr/share/man /var/cache/apt/archives}"
 APP_DEST="${APP_DEST:-/opt/app}"
+ARCHIVE_STRIP_COMPONENTS="${ARCHIVE_STRIP_COMPONENTS:-1}"
 EXPOSE_PORTS="${EXPOSE_PORTS:-8012}"
 START_COMMAND="${START_COMMAND:-}"
 CONTAINER_PORT="${CONTAINER_PORT:-8012}"
@@ -91,6 +92,7 @@ Artifact options:
   --artifact-path PATH
   --artifact-mode archive|dir|file
   --app-dest DIR
+  --archive-strip-components N
 
 Runtime options:
   --runtime-image IMAGE
@@ -136,8 +138,9 @@ Examples:
       --runtime-image eclipse-temurin:21-jre \
       --runtime-apt-packages "ca-certificates fontconfig libreoffice-writer libreoffice-calc libreoffice-impress libreoffice-draw libreoffice-java-common fonts-wqy-zenhei" \
       --runtime-setup-cmd "rm -rf /usr/lib/libreoffice/share/gallery /usr/lib/libreoffice/share/template /var/tmp/* /tmp/*" \
-      --app-dest /opt/kkFileView \
-      --start-command "export KKFILEVIEW_BIN_FOLDER=/opt/kkFileView/bin KK_CACHE_TYPE=jdk; java -Dfile.encoding=UTF-8 -Dspring.config.location=/opt/kkFileView/config/application.properties -jar \$(find /opt/kkFileView/bin -maxdepth 1 -type f -name 'kkFileView-*.jar' | head -n 1)" \
+      --app-dest /opt \
+      --archive-strip-components 0 \
+      --start-command "export KKFILEVIEW_BIN_FOLDER=/opt/kkFileView-5.0.0/bin KK_CACHE_TYPE=jdk; java -Dfile.encoding=UTF-8 -Dspring.config.location=/opt/kkFileView-5.0.0/config/application.properties -jar /opt/kkFileView-5.0.0/bin/kkFileView-5.0.0.jar" \
       --image kkfileview-arm64:v5.0.0
 
   Build generic app from local directory:
@@ -298,6 +301,7 @@ parse_args() {
       --runtime-setup-cmd) RUNTIME_SETUP_CMD="$2"; shift 2 ;;
       --runtime-clean-paths) RUNTIME_CLEAN_PATHS="$2"; shift 2 ;;
       --app-dest) APP_DEST="$2"; shift 2 ;;
+      --archive-strip-components) ARCHIVE_STRIP_COMPONENTS="$2"; shift 2 ;;
       --start-command) START_COMMAND="$2"; shift 2 ;;
       --expose-ports) EXPOSE_PORTS="$2"; shift 2 ;;
       --host-port) HOST_PORT="$2"; shift 2 ;;
@@ -383,6 +387,7 @@ build_args_common() {
     --build-arg "RUNTIME_SETUP_CMD=${RUNTIME_SETUP_CMD}"
     --build-arg "RUNTIME_CLEAN_PATHS=${RUNTIME_CLEAN_PATHS}"
     --build-arg "APP_DEST=${APP_DEST}"
+    --build-arg "ARCHIVE_STRIP_COMPONENTS=${ARCHIVE_STRIP_COMPONENTS}"
     --build-arg "EXPOSE_PORTS=${EXPOSE_PORTS}"
     --build-arg "DEFAULT_START_COMMAND=${START_COMMAND}"
   )

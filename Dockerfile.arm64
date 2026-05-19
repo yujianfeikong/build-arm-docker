@@ -60,6 +60,7 @@ ARG RUNTIME_SETUP_CMD=:
 ARG RUNTIME_CLEAN_PATHS=/usr/share/doc /usr/share/doc-base /usr/share/man /var/cache/apt/archives
 ARG APP_DEST=/opt/app
 ARG ARTIFACT_MODE=dir
+ARG ARCHIVE_STRIP_COMPONENTS=1
 ARG EXPOSE_PORTS=8012
 ARG DEFAULT_START_COMMAND=
 
@@ -79,7 +80,7 @@ RUN if [ -n "${RUNTIME_APT_PACKAGES}" ]; then \
     fi && \
     mkdir -p "${APP_DEST}" && \
     if [ "${ARTIFACT_MODE}" = "archive" ]; then \
-      tar -xzf /tmp/build-output/archive/artifact.tar.gz -C "${APP_DEST}" --strip-components=1; \
+      tar -xzf /tmp/build-output/archive/artifact.tar.gz -C "${APP_DEST}" --strip-components="${ARCHIVE_STRIP_COMPONENTS}"; \
     elif [ "${ARTIFACT_MODE}" = "file" ]; then \
       cp -a /tmp/build-output/file/. "${APP_DEST}/"; \
     else \
