@@ -137,7 +137,7 @@ Examples:
       --runtime-apt-packages "ca-certificates fontconfig libreoffice-writer libreoffice-calc libreoffice-impress libreoffice-draw libreoffice-java-common fonts-wqy-zenhei" \
       --runtime-setup-cmd "rm -rf /usr/lib/libreoffice/share/gallery /usr/lib/libreoffice/share/template /var/tmp/* /tmp/*" \
       --app-dest /opt/kkFileView \
-      --start-command "java -Dfile.encoding=UTF-8 -Dspring.config.location=/opt/kkFileView/config/application.properties -jar \$(find /opt/kkFileView/bin -maxdepth 1 -type f -name 'kkFileView-*.jar' | head -n 1)" \
+      --start-command "export KKFILEVIEW_BIN_FOLDER=/opt/kkFileView/bin KK_CACHE_TYPE=jdk; java -Dfile.encoding=UTF-8 -Dspring.config.location=/opt/kkFileView/config/application.properties -jar \$(find /opt/kkFileView/bin -maxdepth 1 -type f -name 'kkFileView-*.jar' | head -n 1)" \
       --image kkfileview-arm64:v5.0.0
 
   Build generic app from local directory:

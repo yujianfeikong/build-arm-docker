@@ -55,8 +55,15 @@ docker run -d \
   --platform linux/arm64 \
   -p 8012:8012 \
   -e KK_TRUST_HOST='*' \
+  -e KKFILEVIEW_BIN_FOLDER=/opt/kkFileView/bin \
+  -e KK_CACHE_TYPE=jdk \
   kkfileview-arm64:v5.0.0
 ```
+
+The bundled startup command now exports two `kkFileView` runtime variables before Java starts:
+
+- `KKFILEVIEW_BIN_FOLDER=/opt/kkFileView/bin`, so the app resolves its live config file from the packaged `config/` directory instead of the source-tree fallback path `/opt/server/src/main/config`
+- `KK_CACHE_TYPE=jdk`, so ARM64 containers avoid loading the x86-only `rocksdbjni-5.17.2` native library shipped with `kkFileView 5.0.0`
 
 ## Configuration
 
